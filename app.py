@@ -572,10 +572,10 @@ with st.container(border=True):
         cpi_txt = "" if pd.isna(cpi_end) else f"같은 기간 소비자물가 {cpi_end:.0f}%.  \n"
         st.caption(md("예매액: 티켓 판매 금액(총 예매액 − 취소액).  \n"
                       "예매수: 판매 장수(총 예매수 − 취소수).  \n"
-                      "장당 가격: 예매액 ÷ 예매수(명목).   \n"
+                      f"장당 가격: 예매액 ÷ 예매수(명목).{cpi_txt}  \n"
                       "비중: 7개 장르 예매액 합계 중 몫.  \n"
                       "성장 기여도: (최근 12개월 − 2019년) 예매액 ÷ 2019년 전체 예매액. 장르별 합이 전체 성장분(%p). 복합·대중무용 분은 표에 없음.  \n"
-                      + cpi_txt))
+                      ))
                       
     for t in sents:
         st.markdown("- " + md(t))
