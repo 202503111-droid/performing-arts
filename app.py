@@ -303,7 +303,7 @@ def style_extremes(df):
     return df.style.apply(paint, axis=0).format("{:,.0f}%", na_rep="-").format("{:,.1f}%", subset=["비중"], na_rep="-").format("{:+,.0f}%p", subset=["성장 기여도"], na_rep="-")
 
 
-def result_sentences(dec, cpi_end: float, share_now: float, share_base: float, end: str, top_inc: str = None) -> list:
+def result_sentences(dec, top_inc: str = None) -> list:
     out = []
     if dec is not None:
         for g, lead in [("합계", "전체 공연"), (top_inc, f"{name(top_inc) if top_inc else ''}(증가분 1위)")]:
@@ -388,7 +388,6 @@ def share_of(frame: pd.DataFrame):
 
 
 share_ttm = share_of(last12(wa_n, end_ts))
-share_base = np.nan if end_ts <= pd.Timestamp(f"{BASE_YEAR}-12-01") else share_of(wa_n[wa_n.index.year == BASE_YEAR])
 # 예매액이 2019년 연간보다 가장 많이 늘어난 장르(규모 차이를 보완하려고 증가율이 아니라 증가분 기준)
 _inc = (last12(wa_n, end_ts)[GENRES].sum() - wa_n[wa_n.index.year == BASE_YEAR][GENRES].sum()) if len(last12(wa_n, end_ts)) == 12 else None
 top_inc = None if _inc is None or _inc.isna().all() or end_ts <= pd.Timestamp(f"{BASE_YEAR}-12-01") else _inc.idxmax()
@@ -412,7 +411,7 @@ def kpi(col, title: str, value: str, sub: str, help_text: str):
 
 
 st.caption(md(f"{start} ~ {end} · 핵심 지표: 종료 월까지 최근 12개월 ÷ 2019년 연간"))
-k0, k1, k2, k3, k4 = st.columns(5)
+k0, k1, k2, k3 = st.columns(4)
 need = "종료 월을 2019-12 이후로 선택"
 _tot = dec.loc["합계", "명목 예매액"] if dec is not None and "합계" in dec.index else np.nan
 if pd.isna(_tot):
@@ -420,28 +419,48 @@ if pd.isna(_tot):
 else:
     kpi(k0, "전체 공연 예매액", f"{_tot * 100:,.0f}%", "최근 12개월 ÷ 2019년 연간",
         "복합·대중무용 포함 전체 공연의 예매액.")
+
 _a19 = wa_n[wa_n.index.year == BASE_YEAR][GENRES].sum()
-for col, title, key, what in [
-        (k1, "예매액 성장 1위 장르", "명목 예매액", "예매액"),
-        (k2, "관객 수 성장 1위 장르", "예매수", "예매수"),
-        (k3, "장당 가격 성장 1위 장르", "장당 가격(명목)", "장당 평균 가격")]:
-    ser = mrow[key].dropna() if mrow is not None else pd.Series(dtype=float)
-    if ser.empty:
-        kpi(col, title, "-", need, f"7개 장르 중 최근 12개월 {what} ÷ 2019년 연간이 가장 높은 장르.")
-    else:
-        top = ser.idxmax()
-        kpi(col, title, name(top), f"2019년의 {ser[top] * 100:,.0f}% (2019년 예매액 {_a19[top]:,.0f}억 원)",
-            f"7개 장르 중 최근 12개월 {what} ÷ 2019년 연간이 가장 높은 장르. 소규모 장르가 1위일 수 있어 2019년 예매액 병기.")
-kpi(k4, "대중음악 비중 (7개 장르)", "-" if pd.isna(share_ttm) else f"{share_ttm:.0f}%",
-    "최근 12개월 예매액 기준" + ("" if pd.isna(share_base) else f" (2019년 {share_base:.0f}%)"),
-    "7개 장르 합계 중 대중음악의 몫.")
+ser = mrow["명목 예매액"].dropna() if mrow is not None else pd.Series(dtype=float)
+if ser.empty:
+    kpi(k1, "예매액 성장 1위 장르", "-", need, "7개 장르 중 최근 12개월 예매액 ÷ 2019년 연간이 가장 높은 장르.")
+else:
+    top = ser.idxmax()
+    kpi(k1, "예매액 성장 1위 장르", name(top), f"2019년의 {ser[top] * 100:,.0f}% (2019년 예매액 {_a19[top]:,.0f}억 원)",
+        "7개 장르 중 최근 12개월 예매액 ÷ 2019년 연간이 가장 높은 장르. 소규모 장르가 1위일 수 있어 2019년 값 병기.")
+
+_t19 = float(wa_n[wa_n.index.year == BASE_YEAR]["합계"].sum())
+if top_inc is None or _inc is None or _t19 <= 0:
+    kpi(k2, "성장 기여도 1위 장르", "-", need, "7개 장르 중 성장 기여도(%p)가 가장 큰 장르.")
+else:
+    _all_inc = float(last12(wa_n, end_ts)["합계"].sum()) - _t19
+    kpi(k2, "성장 기여도 1위 장르", name(top_inc),
+        f"{_inc[top_inc] / _t19 * 100:+,.0f}%p (전체 {_all_inc / _t19 * 100:+,.0f}%p 중, 증가분 {_inc[top_inc]:,.0f}억 원)",
+        "증가분 = 최근 12개월 예매액 − 2019년 연간 예매액. 성장 기여도 = 증가분 ÷ 2019년 전체 예매액. 7개 장르 중 가장 큰 장르.")
+
+
+def share_by_genre(frame: pd.DataFrame):
+    """7개 장르 중 각 장르의 몫(%, 예매액 기준). 12개월이 모두 있고 합계가 양수일 때만."""
+    f = frame[GENRES]
+    return f.sum() / f.sum().sum() * 100 if len(f) == 12 and f.sum().sum() > 0 else None
+
+
+_sh_now = share_by_genre(last12(wa_n, end_ts))
+_sh_base = None if end_ts <= pd.Timestamp(f"{BASE_YEAR}-12-01") else share_by_genre(wa_n[wa_n.index.year == BASE_YEAR])
+if _sh_now is None:
+    kpi(k3, "비중 1위 장르", "-", "선택한 종료 월 기준 12개월 필요", "7개 장르 합계 중 예매액 몫이 가장 큰 장르.")
+else:
+    _top_sh = _sh_now.idxmax()
+    kpi(k3, "비중 1위 장르", name(_top_sh),
+        f"{_sh_now[_top_sh]:.0f}% (7개 장르 중" + ("" if _sh_base is None else f", 2019년 {_sh_base[_top_sh]:.0f}%") + ")",
+        "최근 12개월 예매액 기준, 7개 장르 합계 중 가장 큰 몫을 차지한 장르.")
 
 with st.expander("용어 풀이"):
     st.markdown(md(
         "- **예매액(예매수):** 예매에서 취소를 뺀 티켓 금액(장수). 티켓을 산 날짜로 집계.\n"
         f"- **성장 지수({BASE_YEAR}년 = 100):** 그 달까지 **최근 12개월 합계**가 {BASE_YEAR}년 연간 합계의 몇 %인가. ex) 200이면 {BASE_YEAR}년의 두 배.\n"
         "- **장당 평균 가격:** 예매액 ÷ 예매수 (만 원).\n"
-        f"- **물가 반영 가격:** 장당 가격 ÷ (월별 소비자물가지수 ÷ {BASE_YEAR}년 평균).\n"
+        f"- **물가 반영 가격:** (월별 예매액 ÷ 그 달 물가)를 12개월 합산해 총 예매수로 나눈 값. 그 달 물가 = 월별 소비자물가지수 ÷ {BASE_YEAR}년 평균.\n"
         "- **물가 상승(물가 요인):** 명목 예매액 배수 ÷ 물가 반영 예매액 배수. 예매액이 많은 달의 물가에 더 큰 비중.\n"
         "- **성장의 구성:** 명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인. 몫은 로그 기준, 합 100%.\n"
         "- **비중:** 7개 장르 합계 중 각 장르의 몫."))
@@ -483,7 +502,7 @@ with tab_cnt:
     growth_tab(wc, "만 장", "cnt_view", "예매수")
 
 with tab_price:
-    ALL = GENRES + TOTAL
+    ALL = TOTAL + GENRES
     last_ts = pd.Timestamp(LAST_MONTH + "-01")
     dec_all = decompose(wa_n, wa_r, wc, last_ts)
     st.markdown(md("**장당 평균 가격**(예매액 ÷ 예매수): 물가보다 더 올랐나? 소비자물가지수는 이 탭에서만 사용. "
@@ -544,7 +563,7 @@ with tab_share:
 
 # ---------------------------------------------------------------- 결론 (탭 아래)
 neg_view = int((in_range(wa_n, "월별", start_ts, end_ts)[genres] < 0).sum().sum()) if genres else 0
-sents = result_sentences(dec, cpi_end, share_ttm, share_base, end, top_inc)
+sents = result_sentences(dec, top_inc)
 with st.container(border=True):
     st.subheader("결론")
     rt = result_table(dec, last12(wa_n, end_ts), wa_n[wa_n.index.year == BASE_YEAR].sum())
@@ -569,8 +588,8 @@ with st.expander("출처와 집계 기준"):
     st.markdown(md(
         "- **출처:** 예술경영지원센터 공연예술통합전산망(KOPIS) 예매통계 ‘장르별통계’, 월 단위 조회 후 병합.\n"
         f"- **조회일:** {DATA_DATE} (최종집계 2026.11.26). 통계 갱신에 따라 값이 달라질 수 있음.\n"
-        "- **물가:** 국가데이터처(통계청) 소비자물가지수 총지수(2020=100), 월별. 연평균·최근 월 값을 공식 통계와 대조.\n"
-        f"- **기간:** 2019.01~{LAST_MONTH.replace('-', '.')}. 2026.11은 11/25까지의 부분 자료라 제외.\n"
+        "- **물가:** 국가데이터처(통계청) 소비자물가지수 총지수(2020=100), 월별.\n"
+        f"- **기간:** 2019.01~{LAST_MONTH.replace('-', '.')}. 2026.11은 11/25까지의 부분 자료라 제외. 2018년 이전은 집계가 불완전해 제외(2018년 연간 공연건수 5,387건).\n"
         "- **2019년 집계:** 2019.6.25 개정 공연법 시행으로 예매처·제작사의 전송이 의무화됨. 그 전에는 동의한 제작사만 집계(포괄율 약 38%, 2017년 기준).\n"
         "- **단위:** 예매액은 천원을 억 원으로, 예매수는 만 장으로 환산. 예매액·예매수 모두 예매에서 취소를 뺀 값(예매일자 기준).\n"
         "- **공연건수:** 월별 합산 시 중복이 생겨 사용하지 않음.\n"
