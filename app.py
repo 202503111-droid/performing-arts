@@ -158,6 +158,36 @@ def contributions(row: pd.Series) -> dict:
             "물가 상승": float(np.log(row["물가 요인"])) / la * 100}
 
 
+def ols_line(x: np.ndarray, y: np.ndarray):
+    """단순 선형회귀 y = a + b·x. (기울기 b, 기울기의 표준오차, 결정계수 R², 관측 수, 절편 a)를 돌려준다."""
+    n = len(x)
+    X = np.column_stack([np.ones(n), x])
+    beta = np.linalg.lstsq(X, y, rcond=None)[0]
+    resid = y - X @ beta
+    sxx = float(((x - x.mean()) ** 2).sum())
+    sst = float(((y - y.mean()) ** 2).sum())
+    se = float(np.sqrt(resid @ resid / (n - 2) / sxx)) if sxx > 0 else np.nan
+    return float(beta[1]), se, (float(1 - resid @ resid / sst) if sst > 0 else np.nan), n, float(beta[0])
+
+
+# 코로나 시기로 표시하는 달(설명용 음영 구간과 같은 기간의 달). 전월 대비 변화는 두 달이 필요해서 앞뒤 어느 쪽이든 이 달이면 코로나 시기로 본다.
+COVID_MONTHS = pd.date_range("2020-02-01", "2022-04-01", freq="MS")
+
+
+def monthly_change_frame(wa: pd.DataFrame, wc: pd.DataFrame, price: pd.Series, g: str) -> pd.DataFrame:
+    """월별 전월 대비 변화(로그 변화 × 100, 대략 %): 소비자물가와 장르의 장당 평균 가격(명목)."""
+    p = ratio(wa[[g]], wc[[g]])[g]
+    fr = pd.DataFrame({"물가": np.log(price.reindex(p.index)).diff() * 100, "가격": np.log(p).diff() * 100})
+    prev = fr.index - pd.DateOffset(months=1)
+    fr["코로나"] = fr.index.isin(COVID_MONTHS) | pd.Index(prev).isin(COVID_MONTHS)
+    return fr.dropna(subset=["물가", "가격"])
+
+
+def mom_regression(fr: pd.DataFrame, include_covid: bool):
+    d = fr if include_covid else fr[~fr["코로나"]]
+    return ols_line(d["물가"].to_numpy(), d["가격"].to_numpy()) if len(d) >= 8 else None
+
+
 def in_range(s: pd.DataFrame, unit: str, start_ts: pd.Timestamp, end_ts: pd.Timestamp) -> pd.DataFrame:
     if unit == "월별":
         return s[(s.index >= start_ts) & (s.index <= end_ts)]
@@ -225,6 +255,32 @@ def make_share_figure(share: pd.DataFrame) -> go.Figure:
     fig.update_layout(barmode="stack")
     fig.update_yaxes(title="음악 3장르 중 비중 (%)", range=[0, 100])
     fig.update_xaxes(type="category", tickangle=-45)
+    return style(fig)
+
+
+def make_mom_figure(fr: pd.DataFrame, g: str, include_covid: bool, fit) -> go.Figure:
+    """월별 전월 대비 변화 산점도: x = 소비자물가, y = 장당 가격. 한 점이 한 달."""
+    fig = go.Figure()
+    base = fr[~fr["코로나"]]
+    fig.add_trace(go.Scatter(
+        x=base["물가"], y=base["가격"], mode="markers", name="코로나 시기 외",
+        customdata=[t.strftime("%Y-%m") for t in base.index],
+        marker=dict(color=COLORS[g], size=8, line=dict(color="white", width=1)),
+        hovertemplate="%{customdata}<br>물가 %{x:.2f}%<br>가격 %{y:.1f}%<extra></extra>"))
+    cv = fr[fr["코로나"]]
+    if include_covid and len(cv):
+        fig.add_trace(go.Scatter(
+            x=cv["물가"], y=cv["가격"], mode="markers", name="코로나 시기",
+            customdata=[t.strftime("%Y-%m") for t in cv.index],
+            marker=dict(color="rgba(255,255,255,0)", size=8, line=dict(color="#6b7380", width=1.6)),
+            hovertemplate="%{customdata}<br>물가 %{x:.2f}%<br>가격 %{y:.1f}%<extra></extra>"))
+    used = fr if include_covid else base
+    if fit is not None and len(used):
+        x0, x1 = float(used["물가"].min()), float(used["물가"].max())
+        fig.add_trace(go.Scatter(x=[x0, x1], y=[fit[4] + fit[0] * x0, fit[4] + fit[0] * x1], mode="lines", name="회귀선",
+                                 line=dict(color=NAVY, width=2, dash="dash"), hoverinfo="skip"))
+    fig.update_xaxes(title="소비자물가 전월 대비 (%)")
+    fig.update_yaxes(title="장당 평균 가격 전월 대비 (%)")
     return style(fig)
 
 
@@ -425,39 +481,66 @@ with tab_cnt:
     growth_tab(wc, "만 장", "cnt_view", "예매수")
 
 with tab_price:
-    st.markdown(md("**장당 평균 가격**(예매액 ÷ 예매수)은 물가보다 더 올랐는가? 소비자물가지수는 이 탭에서만 사용합니다."))
-    if not genres:
-        st.info("왼쪽에서 장르를 하나 이상 선택해 주세요.")
-    else:
-        g = window(rolling_index(wa_n, denom=wc))
-        cpi_line = window(rolling_price_level(price_s))
-        if g.dropna(how="all").empty:
-            st.warning("선택한 기간에 계산할 값이 없습니다. 종료 월을 2019-12 이후로, 기간을 넓혀 주세요.")
-        else:
-            st.plotly_chart(make_line_figure(g, genres, "2019년 연간 = 100 (최근 12개월 기준)", ref100=True, quarterly=False,
-                                             cpi=cpi_line, hover_suffix=" (최근 12개월)"))
-            st.caption(md("장르 선이 점선(소비자물가)보다 위에 있으면 물가 상승분을 넘어 가격이 올랐다는 뜻입니다. 가격은 명목값이고, "
-                          "소비자물가는 최근 12개월 평균 지수입니다. 공연마다 가격 차이가 매우 커서 가격의 실제 값은 보여주지 않고 "
-                          "2019년 대비 변화만 비교합니다. " + growth_note))
-    if dec is not None:
+    ALL = MUSIC + COMPARE
+    last_ts = pd.Timestamp(LAST_MONTH + "-01")
+    dec_all = decompose(wa_n, wa_r, wc, last_ts)
+    st.markdown(md("**장당 평균 가격**(예매액 ÷ 예매수)은 물가보다 더 올랐는가? 소비자물가지수는 이 탭에서만 사용합니다. "
+                   f"이 탭은 왼쪽에서 고른 장르·기간과 상관없이 **전체 장르, 전체 기간(2019~{LAST_MONTH.replace('-', '.')})**을 보여줍니다."))
+    g = rolling_index(wa_n, denom=wc)
+    st.plotly_chart(make_line_figure(g, ALL, "2019년 연간 = 100 (최근 12개월 기준)", ref100=True, quarterly=False,
+                                     cpi=rolling_price_level(price_s), hover_suffix=" (최근 12개월)"))
+    st.caption(md("장르 선이 점선(소비자물가)보다 위에 있으면 물가 상승분을 넘어 가격이 올랐다는 뜻입니다. 가격은 명목값이고, "
+                  "소비자물가는 최근 12개월 평균 지수입니다. 공연마다 가격 차이가 매우 커서 가격의 실제 값은 보여주지 않고 "
+                  "2019년 대비 변화만 비교합니다. " + growth_note))
+    if dec_all is not None:
+        cpi_last = float(last12(price_s, last_ts).mean() * 100)
+        rows = [{"장르": name(gname),
+                 "장당 가격·명목 (2019=100)": round(dec_all.loc[gname, "장당 가격(명목)"] * 100, 1),
+                 "소비자물가 (2019=100)": round(cpi_last, 1),
+                 "장당 가격·물가 반영 (2019=100)": round(dec_all.loc[gname, "장당 가격(물가 반영)"] * 100, 1)}
+                for gname in ALL if gname in dec_all.index and not dec_all.loc[gname].isna().all()]
+        st.dataframe(pd.DataFrame(rows), hide_index=True)
+        st.caption(md(f"{LAST_MONTH} 기준 최근 12개월입니다. 물가 반영 가격은 월별 물가로 금액을 나눠 계산하므로, "
+                      "명목 가격 지수를 소비자물가 지수로 나눈 값과 1~2%p 다를 수 있습니다."))
+
+    st.markdown("##### 가격은 물가를 따라 움직였나: 월별 전월 대비 변화")
+    st.markdown(md("한 점이 한 달입니다. 가로축은 그 달 소비자물가가 전월보다 몇 % 변했는지, 세로축은 그 달 장당 평균 가격이 전월보다 몇 % 변했는지입니다. "
+                   "물가가 많이 오른 달에 가격도 많이 올랐다면 점들이 오른쪽 위로 늘어섭니다."))
+    c1, c2 = st.columns([2, 3])
+    with c1:
+        gsel = st.selectbox("산점도로 볼 장르", ALL, format_func=name, key="mom_genre")
+    with c2:
+        inc_cv = st.checkbox("코로나 시기(2020.02~2022.04) 포함", value=True, key="mom_covid",
+                             help="이 시기에는 판매가 거의 없고 취소가 몰려 가격이 의미 없이 크게 튑니다. 아래 표에는 포함·제외 결과를 나란히 보여줍니다.")
+    fr = monthly_change_frame(wa_n, wc, price_s, gsel)
+    fit_sel = mom_regression(fr, inc_cv)
+    st.plotly_chart(make_mom_figure(fr, gsel, inc_cv, fit_sel))
+    if fit_sel is not None:
+        used = fr if inc_cv else fr[~fr["코로나"]]
+        st.caption(md(f"{name(gsel)}: 기울기 {fit_sel[0]:.1f} ± {fit_sel[1]:.1f}, R² {fit_sel[2]:.3f}, {fit_sel[3]}개월. "
+                      f"소비자물가의 전월 대비 변화는 표준편차 {used['물가'].std():.1f}%인데, 장당 가격은 {used['가격'].std():.0f}%로 훨씬 크게 흔들립니다."))
+    rows = []
+    for gname in ALL:
+        frg = monthly_change_frame(wa_n, wc, price_s, gname)
+        a_, b_ = mom_regression(frg, True), mom_regression(frg, False)
+        rows.append({"장르": name(gname),
+                     "전체: 기울기 (±표준오차)": "-" if a_ is None else f"{a_[0]:.1f} ± {a_[1]:.1f}",
+                     "전체: R²": None if a_ is None else round(a_[2], 3),
+                     "코로나 제외: 기울기 (±표준오차)": "-" if b_ is None else f"{b_[0]:.1f} ± {b_[1]:.1f}",
+                     "코로나 제외: R²": None if b_ is None else round(b_[2], 3),
+                     "개월 수 (전체 / 제외)": f"{'-' if a_ is None else a_[3]} / {'-' if b_ is None else b_[3]}"})
+    st.dataframe(pd.DataFrame(rows), hide_index=True)
+    st.caption(md("**읽는 법:** 기울기는 ‘소비자물가가 전월보다 1% 오른 달에 장당 가격이 평균 몇 % 변했는가’이고, R²는 가격 변화 중 물가 변화로 설명되는 비율입니다. "
+                  "R²가 0에 가까우면 월별 가격 변화는 물가와 관계가 없다는 뜻입니다. 가격은 그 달에 어떤 공연이 많이 팔렸는지에 따라 달라지고, "
+                  "물가는 한 달에 0.3% 안팎으로만 변하기 때문입니다. 코로나 시기(전후 한 달 포함)는 포함해도 제외해도 결론이 같은지 확인하려고 나란히 두었습니다. "
+                  "표준오차는 자기상관이 있으면 실제보다 작게 나옵니다. 인과가 아니라 ‘함께 움직인 정도’로만 해석하세요."))
+
+    if dec_all is not None:
         rows = []
-        for gname in genres:
-            if gname not in dec.index or dec.loc[gname].isna().all():
+        for gname in ALL:
+            if gname not in dec_all.index or dec_all.loc[gname].isna().all():
                 continue
-            r = dec.loc[gname]
-            rows.append({"장르": name(gname),
-                         "장당 가격·명목 (2019=100)": round(r["장당 가격(명목)"] * 100, 1),
-                         "소비자물가 (2019=100)": None if pd.isna(cpi_end) else round(cpi_end, 1),
-                         "장당 가격·물가 반영 (2019=100)": round(r["장당 가격(물가 반영)"] * 100, 1)})
-        if rows:
-            st.dataframe(pd.DataFrame(rows), hide_index=True)
-            st.caption(md(f"{end} 기준 최근 12개월입니다. 물가 반영 가격은 월별 물가로 금액을 나눠 계산하므로, "
-                          "명목 가격 지수를 소비자물가 지수로 나눈 값과 1~2%p 다를 수 있습니다."))
-        rows = []
-        for gname in genres:
-            if gname not in dec.index or dec.loc[gname].isna().all():
-                continue
-            r = dec.loc[gname]
+            r = dec_all.loc[gname]
             c = contributions(r)
             rows.append({"장르": name(gname),
                          "명목 예매액 (2019=100)": round(r["명목 예매액"] * 100, 1),
@@ -472,8 +555,6 @@ with tab_price:
             st.dataframe(pd.DataFrame(rows), hide_index=True)
             st.caption(md("명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인입니다. 성장 몫은 명목 예매액이 늘어난 장르에서만 계산하며 "
                           "세 요인의 합이 100%입니다. 음수는 그 요인이 성장을 깎았다는 뜻입니다."))
-    else:
-        st.info("종료 월을 2019-12 이후로 선택하면 물가와의 비교가 표시됩니다.")
 
 with tab_share:
     st.markdown(md("**음악 3장르 중 각 장르의 비중**입니다(분기별, 명목 예매액 기준). 규모가 한쪽으로 쏠려 있는지, 그 구성이 어떻게 바뀌었는지 확인하는 용도입니다."))
