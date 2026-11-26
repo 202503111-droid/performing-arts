@@ -550,7 +550,7 @@ with st.container(border=True):
     rt = result_table(dec, last12(wa_n, end_ts), wa_n[wa_n.index.year == BASE_YEAR].sum())
     if rt is not None:
         st.dataframe(style_extremes(rt))
-        cpi_txt = "" if pd.isna(cpi_end) else f"같은 기간 소비자물가 {cpi_end:.0f}%."
+        cpi_txt = "" if pd.isna(cpi_end) else f" 같은 기간 소비자물가 {cpi_end:.0f}%."
         st.caption(md("예매액: 티켓 판매 금액(총 예매액 − 취소액).  \n"
                       "예매수: 판매 장수(총 예매수 − 취소수).  \n"
                       f"장당 가격: 예매액 ÷ 예매수(명목).{cpi_txt}  \n"
