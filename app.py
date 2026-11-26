@@ -266,7 +266,7 @@ def fmt_pct(x: float) -> str:
     return "-" if pd.isna(x) else f"{x:,.0f}%"
 
 
-def result_table(dec, ttm_amount):
+def result_table(dec, ttm_amount, base_amount):
     """결론 표: 행 = 전체 공연 + 7개 장르, 열 = 예매액·예매수·장당 가격(2019년 연간 = 100%) + 비중(7개 장르 중)."""
     if dec is None:
         return None
@@ -274,11 +274,15 @@ def result_table(dec, ttm_amount):
     tot7 = float(ttm_amount[GENRES].sum().sum()) if ttm_amount is not None and len(ttm_amount) == 12 else np.nan
     share = {g: (np.nan if pd.isna(tot7) or tot7 <= 0 else float(ttm_amount[g].sum()) / tot7 * 100) for g in GENRES}
     share["합계"] = np.nan if pd.isna(tot7) or tot7 <= 0 else 100.0
+    t19 = float(base_amount["합계"]) if base_amount is not None and "합계" in base_amount.index else np.nan
+    contrib = {g: (np.nan if pd.isna(t19) or t19 <= 0 else (float(ttm_amount[g].sum()) - float(base_amount[g])) / t19 * 100)
+               for g in GENRES + TOTAL}
     df = pd.DataFrame({"장르": [name(g) for g in idx],
                        "예매액": [dec.loc[g, "명목 예매액"] * 100 for g in idx],
                        "예매수": [dec.loc[g, "예매수"] * 100 for g in idx],
                        "장당 가격": [dec.loc[g, "장당 가격(명목)"] * 100 for g in idx],
-                       "비중": [share[g] for g in idx]})
+                       "비중": [share[g] for g in idx],
+                       "성장 기여도": [contrib[g] for g in idx]})
     return df.set_index("장르")
 
 
@@ -296,7 +300,7 @@ def style_extremes(df):
             out[name("합계")] = out[name("합계")] or "font-weight:700"
         return out
 
-    return df.style.apply(paint, axis=0).format("{:,.0f}%", na_rep="-").format("{:,.1f}%", subset=["비중"], na_rep="-")
+    return df.style.apply(paint, axis=0).format("{:,.0f}%", na_rep="-").format("{:,.1f}%", subset=["비중"], na_rep="-").format("{:+,.0f}%p", subset=["성장 기여도"], na_rep="-")
 
 
 def result_sentences(dec, cpi_end: float, share_now: float, share_base: float, end: str, top_inc: str = None) -> list:
@@ -543,13 +547,16 @@ neg_view = int((in_range(wa_n, "월별", start_ts, end_ts)[genres] < 0).sum().su
 sents = result_sentences(dec, cpi_end, share_ttm, share_base, end, top_inc)
 with st.container(border=True):
     st.subheader("결론")
-    rt = result_table(dec, last12(wa_n, end_ts))
+    rt = result_table(dec, last12(wa_n, end_ts), wa_n[wa_n.index.year == BASE_YEAR].sum())
     if rt is not None:
-        st.markdown(f"##### 최근 12개월 {window_label(end)}: 예매액·예매수·장당 가격은 2019년 연간 대비, 비중은 7개 장르 중")
         st.dataframe(style_extremes(rt))
-        cpi_txt = "" if pd.isna(cpi_end) else f" 같은 기간 소비자물가 {cpi_end:.0f}%."
-        st.caption(md("예매액: 티켓 판매 금액. 예매수: 판매 장수. 장당 가격: 예매액 ÷ 예매수(명목). 300% = 2019년의 3배. 비중: 7개 장르 예매액 합계 중 몫."
-                      + cpi_txt + " 7개 장르 중 최고는 굵은 파란색, 최저는 굵은 주황색. 물가 반영 가격은 탭 3 참고."))
+        cpi_txt = "" if pd.isna(cpi_end) else f"같은 기간 소비자물가 {cpi_end:.0f}%.  \n"
+        st.caption(md(f"최근 12개월 {window_label(end)}. 예매액·예매수·장당 가격은 2019년 연간 = 100% (300% = 2019년의 3배).  \n"
+                      "예매액: 티켓 판매 금액. 예매수: 판매 장수. 장당 가격: 예매액 ÷ 예매수(명목).  \n"
+                      "비중: 7개 장르 예매액 합계 중 몫.  \n"
+                      "성장 기여도: (최근 12개월 − 2019년) 예매액 ÷ 2019년 전체 예매액. 장르별 합이 전체 성장분(%p). 복합·대중무용 분은 표에 없음.  \n"
+                      + cpi_txt +
+                      "7개 장르 중 최고는 굵은 파란색, 최저는 굵은 주황색. 물가 반영 가격은 탭 3 참고."))
     for t in sents:
         st.markdown("- " + md(t))
     if not sents:
