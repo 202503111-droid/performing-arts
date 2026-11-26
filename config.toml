@@ -1,0 +1,10 @@
+[theme]
+base = "light"
+primaryColor = "#1f4e9c"            # 강조색: 네이비 계열 블루 (체크박스, 선택 항목 등)
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f4f9" # 사이드바·입력창 바탕: 아주 옅은 회청색
+textColor = "#1d2433"
+font = "sans serif"
+
+[client]
+toolbarMode = "minimal"
