@@ -34,7 +34,7 @@ FONT = "Pretendard, 'Noto Sans KR', 'Apple SD Gothic Neo', 'Malgun Gothic', sans
 # 참고 구간(국내 첫 확진 ~ 사회적 거리두기 전면 해제). 설명용 음영이며 분석 기준이 아니다.
 COVID_SPAN = ("2020-01-20", "2022-04-18")
 GROWTH_VIEW = "성장 (2019년 = 100)"
-LEVEL_VIEW = "실제 값 (분기별)"
+LEVEL_VIEW = "실제 값 (월별)"
 
 
 def name(g: str) -> str:
@@ -233,21 +233,29 @@ def fmt_pct(x: float) -> str:
     return "-" if pd.isna(x) else f"{x:,.0f}%"
 
 
-def result_sentences(dec, share_now: float, share_base: float, end: str) -> list:
+def result_sentences(dec, cpi_end: float, share_now: float, share_base: float, end: str) -> list:
     out = []
     if dec is not None:
         m = dec.loc[[g for g in MUSIC if g in dec.index]]
-        for col, label in [("예매액(물가 반영)", "물가를 반영한 예매액"), ("예매수", "예매수"),
-                           ("장당 가격(물가 반영)", "물가를 반영한 장당 가격")]:
+
+        def line(col, label, extra=""):
             parts = [f"{name(g)} {fmt_pct(m.loc[g, col] * 100)}" for g in m.index if not pd.isna(m.loc[g, col])]
             if parts:
-                out.append(f"{end} 기준 최근 12개월 {label}{josa(label, '은', '는')} 2019년 연간 대비 " + ", ".join(parts) + "입니다.")
-        top = m["예매액(물가 반영)"].dropna()
+                out.append(f"{end} 기준 최근 12개월 {label}{josa(label, '은', '는')} 2019년 연간 대비 " + ", ".join(parts) + f"입니다{extra}.")
+        line("명목 예매액", "예매액")
+        line("예매수", "예매수")
+        line("장당 가격(명목)", "장당 평균 가격")
+        if not pd.isna(cpi_end):
+            parts = [f"{name(g)} {fmt_pct(m.loc[g, '장당 가격(물가 반영)'] * 100)}" for g in m.index
+                     if not pd.isna(m.loc[g, "장당 가격(물가 반영)"])]
+            if parts:
+                out.append(f"같은 기간 소비자물가는 2019년의 {cpi_end:.0f}%였고, 물가를 반영한 장당 가격은 " + ", ".join(parts) + "입니다.")
+        top = m["명목 예매액"].dropna()
         if not top.empty:
             g = top.idxmax()
             c = contributions(m.loc[g])
             if c:
-                out.append(f"예매액이 가장 크게 성장한 {name(g)}의 명목 예매액 성장은 로그 기준으로 관객 수 {c['관객 수']:.0f}%, "
+                out.append(f"예매액이 가장 크게 성장한 {name(g)}의 성장은 로그 기준으로 관객 수 {c['관객 수']:.0f}%, "
                            f"물가를 뺀 가격 상승 {c['가격(물가 반영)']:.0f}%, 물가 상승 {c['물가 상승']:.0f}%에서 나왔습니다.")
     if not (pd.isna(share_now) or pd.isna(share_base)):
         out.append(f"음악 3장르 중 대중음악의 비중(예매액 기준)은 2019년 {share_base:.0f}%에서 최근 12개월 {share_now:.0f}%입니다.")
@@ -334,6 +342,10 @@ share_ttm = share_of(last12(wa_n, end_ts))
 share_base = np.nan if end_ts <= pd.Timestamp(f"{BASE_YEAR}-12-01") else share_of(wa_n[wa_n.index.year == BASE_YEAR])
 
 
+_l12 = last12(price_s, end_ts)
+cpi_end = float(_l12.mean() * 100) if len(_l12) == 12 and end_ts > pd.Timestamp(f"{BASE_YEAR}-12-01") else np.nan
+
+
 def window(s):
     """선택한 시작~종료 월로 자른다(월 단위 인덱스)."""
     return s[(s.index >= start_ts) & (s.index <= end_ts)]
@@ -351,9 +363,9 @@ st.caption(md(f"{start} ~ {end} · 핵심 지표는 종료 월까지 최근 12�
 k1, k2, k3, k4 = st.columns(4)
 need = "종료 월을 2019-12 이후로 선택하세요"
 for col, title, key, what in [
-        (k1, "예매액 성장 1위 (물가 반영)", "예매액(물가 반영)", "물가를 반영한 예매액"),
+        (k1, "예매액 성장 1위", "명목 예매액", "예매액"),
         (k2, "관객 수(예매수) 성장 1위", "예매수", "예매수"),
-        (k3, "장당 가격 성장 1위 (물가 반영)", "장당 가격(물가 반영)", "물가를 반영한 장당 평균 가격")]:
+        (k3, "장당 가격 성장 1위", "장당 가격(명목)", "장당 평균 가격")]:
     ser = mrow[key].dropna() if mrow is not None else pd.Series(dtype=float)
     if ser.empty:
         kpi(col, title, "-", need, f"음악 3장르 중, 최근 12개월 {what}이 2019년 연간의 몇 %인지 비교합니다.")
@@ -376,89 +388,47 @@ with st.expander("용어 풀이: 예매액 · 성장 지수 · 최근 12개월 �
         "음수인 몫은 그 요인이 성장을 깎았다는 뜻입니다.\n"
         "- **비중:** 대중음악·클래식·국악 합계 중 각 장르의 몫입니다."))
 
-tab_rev, tab_cnt, tab_price, tab_share, tab_data = st.tabs(["1. 예매액", "2. 예매수", "3. 장당 가격과 물가", "장르 비중", "자료"])
+tab_rev, tab_cnt, tab_price, tab_share = st.tabs(["1. 예매액", "2. 예매수", "3. 장당 가격과 물가", "장르 비중"])
 
 growth_note = ("각 점은 그 달까지 최근 12개월 합계를 2019년 연간 합계와 비교한 값입니다(2019-12에 100에서 시작). "
                "음영은 설명용 참고 구간(국내 첫 확진~거리두기 전면 해제)이며 분석 기준이 아닙니다.")
+level_note = "월별 값입니다. 계절성이 있고, 취소가 몰린 달에는 값이 작아지거나 음수가 될 수 있습니다. 규모가 작은 장르는 성장 보기에서 흐름을 비교하세요."
+
+
+def growth_tab(w_all: pd.DataFrame, level_title: str, key: str, label: str):
+    view = st.radio("보기", [GROWTH_VIEW, LEVEL_VIEW], horizontal=True, key=key)
+    if not genres:
+        st.info("왼쪽에서 장르를 하나 이상 선택해 주세요.")
+    elif view == GROWTH_VIEW:
+        g = window(rolling_index(w_all))
+        if g.dropna(how="all").empty:
+            st.warning("선택한 기간에 계산할 값이 없습니다. 종료 월을 2019-12 이후로, 기간을 넓혀 주세요.")
+        else:
+            st.plotly_chart(make_line_figure(g, genres, "2019년 연간 = 100 (최근 12개월 합계 기준)", ref100=True, quarterly=False,
+                                             hover_suffix=" (최근 12개월)"))
+            st.caption(md(growth_note + (" 금액은 물가를 반영하지 않은 명목값입니다." if label == "예매액" else "")))
+    else:
+        mv = window(w_all)
+        if mv.empty:
+            st.warning("선택한 기간에 해당하는 값이 없습니다. 기간을 넓혀 주세요.")
+        else:
+            st.plotly_chart(make_line_figure(mv, genres, level_title, ref100=False, quarterly=False))
+            st.caption(md(level_note))
+
 
 with tab_rev:
     st.markdown(md("**예매액**(티켓 판매 금액)은 얼마나 늘었는가?"))
-    c_view, c_real = st.columns([3, 2])
-    with c_view:
-        view = st.radio("보기", [GROWTH_VIEW, LEVEL_VIEW], horizontal=True, key="rev_view")
-    with c_real:
-        real = st.checkbox("물가 반영 (2019년 가격)", value=False, key="rev_real",
-                           help="월별 소비자물가지수로 나눠 2019년 평균 물가 기준 가격으로 바꿉니다.")
-    w_amt = wa_r if real else wa_n
-    if not genres:
-        st.info("왼쪽에서 장르를 하나 이상 선택해 주세요.")
-    elif view == GROWTH_VIEW:
-        g = window(rolling_index(w_amt))
-        if g.dropna(how="all").empty:
-            st.warning("선택한 기간에 계산할 값이 없습니다. 종료 월을 2019-12 이후로, 기간을 넓혀 주세요.")
-        else:
-            st.plotly_chart(make_line_figure(g, genres, "2019년 연간 = 100 (최근 12개월 합계 기준)", ref100=True, quarterly=False,
-                                             hover_suffix=" (최근 12개월)"))
-            st.caption(md(growth_note + (" 금액은 2019년 가격으로 환산했습니다." if real else " 금액은 물가를 반영하지 않은 명목값입니다.")))
-    else:
-        qv = in_range(to_quarterly(w_amt), "분기별", start_ts, end_ts)
-        if qv.empty:
-            st.warning("선택한 기간에 해당하는 분기가 없습니다. 기간을 넓혀 주세요.")
-        else:
-            st.plotly_chart(make_line_figure(qv, genres, "억 원" + (" (2019년 가격)" if real else ""), ref100=False, quarterly=True))
-            st.caption(md("분기별 합계입니다. 규모가 작은 장르는 성장 보기에서 흐름을 비교하세요."))
-
-    st.markdown("##### 이 성장은 무엇에서 왔나 (최근 12개월, 2019년 대비)")
-    if dec is None:
-        st.warning("종료 월을 2019-12 이후로 선택해 주세요.")
-    else:
-        shown = [g for g in genres if g in dec.index and not dec.loc[g].isna().all()]
-        if not shown:
-            st.info("표시할 장르가 없습니다. 왼쪽에서 장르를 선택해 주세요.")
-        else:
-            rows = []
-            for g in shown:
-                r = dec.loc[g]
-                c = contributions(r)
-                rows.append({"장르": name(g),
-                             "명목 예매액 (2019=100)": round(r["명목 예매액"] * 100, 1),
-                             "예매수 (2019=100)": round(r["예매수"] * 100, 1),
-                             "장당 가격·물가 반영 (2019=100)": round(r["장당 가격(물가 반영)"] * 100, 1),
-                             "물가 요인 (2019=100)": round(r["물가 요인"] * 100, 1),
-                             "성장 몫: 관객 수 (%)": None if not c else round(c["관객 수"], 1),
-                             "성장 몫: 가격 (%)": None if not c else round(c["가격(물가 반영)"], 1),
-                             "성장 몫: 물가 (%)": None if not c else round(c["물가 상승"], 1)})
-            st.dataframe(pd.DataFrame(rows), hide_index=True)
-            st.caption(md("명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인입니다. 성장 몫은 명목 예매액이 늘어난 장르에서만 계산하며 "
-                          "세 요인의 합이 100%입니다. 음수는 그 요인이 성장을 깎았다는 뜻입니다."))
+    growth_tab(wa_n, "억 원", "rev_view", "예매액")
 
 with tab_cnt:
     st.markdown(md("**예매수**(티켓 판매 장수)는 얼마나 늘었는가?"))
-    view = st.radio("보기", [GROWTH_VIEW, LEVEL_VIEW], horizontal=True, key="cnt_view")
-    if not genres:
-        st.info("왼쪽에서 장르를 하나 이상 선택해 주세요.")
-    elif view == GROWTH_VIEW:
-        g = window(rolling_index(wc))
-        if g.dropna(how="all").empty:
-            st.warning("선택한 기간에 계산할 값이 없습니다. 종료 월을 2019-12 이후로, 기간을 넓혀 주세요.")
-        else:
-            st.plotly_chart(make_line_figure(g, genres, "2019년 연간 = 100 (최근 12개월 합계 기준)", ref100=True, quarterly=False,
-                                             hover_suffix=" (최근 12개월)"))
-            st.caption(md(growth_note))
-    else:
-        qv = in_range(to_quarterly(wc), "분기별", start_ts, end_ts)
-        if qv.empty:
-            st.warning("선택한 기간에 해당하는 분기가 없습니다. 기간을 넓혀 주세요.")
-        else:
-            st.plotly_chart(make_line_figure(qv, genres, "만 장", ref100=False, quarterly=True))
-            st.caption(md("분기별 합계입니다. 규모가 작은 장르는 성장 보기에서 흐름을 비교하세요."))
+    growth_tab(wc, "만 장", "cnt_view", "예매수")
 
 with tab_price:
-    st.markdown(md("**장당 평균 가격**(예매액 ÷ 예매수)은 물가보다 더 올랐는가?"))
-    view = st.radio("보기", [GROWTH_VIEW, LEVEL_VIEW], horizontal=True, key="price_view")
+    st.markdown(md("**장당 평균 가격**(예매액 ÷ 예매수)은 물가보다 더 올랐는가? 소비자물가지수는 이 탭에서만 사용합니다."))
     if not genres:
         st.info("왼쪽에서 장르를 하나 이상 선택해 주세요.")
-    elif view == GROWTH_VIEW:
+    else:
         g = window(rolling_index(wa_n, denom=wc))
         cpi_line = window(rolling_price_level(price_s))
         if g.dropna(how="all").empty:
@@ -467,29 +437,43 @@ with tab_price:
             st.plotly_chart(make_line_figure(g, genres, "2019년 연간 = 100 (최근 12개월 기준)", ref100=True, quarterly=False,
                                              cpi=cpi_line, hover_suffix=" (최근 12개월)"))
             st.caption(md("장르 선이 점선(소비자물가)보다 위에 있으면 물가 상승분을 넘어 가격이 올랐다는 뜻입니다. 가격은 명목값이고, "
-                          "소비자물가는 최근 12개월 평균 지수입니다. " + growth_note))
-            if dec is not None:
-                rows = []
-                cpi_end = float(last12(price_s, end_ts).mean() * 100) if len(last12(price_s, end_ts)) == 12 else np.nan
-                for gname in genres:
-                    if gname not in dec.index or dec.loc[gname].isna().all():
-                        continue
-                    r = dec.loc[gname]
-                    rows.append({"장르": name(gname),
-                                 "장당 가격·명목 (2019=100)": round(r["장당 가격(명목)"] * 100, 1),
-                                 "소비자물가 (2019=100)": None if pd.isna(cpi_end) else round(cpi_end, 1),
-                                 "장당 가격·물가 반영 (2019=100)": round(r["장당 가격(물가 반영)"] * 100, 1)})
-                if rows:
-                    st.dataframe(pd.DataFrame(rows), hide_index=True)
-                    st.caption(md(f"{end} 기준 최근 12개월입니다. 물가 반영 가격은 월별 물가로 금액을 나눠 계산하므로, "
-                                  "명목 가격 지수를 소비자물가 지수로 나눈 값과 1~2%p 다를 수 있습니다."))
+                          "소비자물가는 최근 12개월 평균 지수입니다. 공연마다 가격 차이가 매우 커서 가격의 실제 값은 보여주지 않고 "
+                          "2019년 대비 변화만 비교합니다. " + growth_note))
+    if dec is not None:
+        rows = []
+        for gname in genres:
+            if gname not in dec.index or dec.loc[gname].isna().all():
+                continue
+            r = dec.loc[gname]
+            rows.append({"장르": name(gname),
+                         "장당 가격·명목 (2019=100)": round(r["장당 가격(명목)"] * 100, 1),
+                         "소비자물가 (2019=100)": None if pd.isna(cpi_end) else round(cpi_end, 1),
+                         "장당 가격·물가 반영 (2019=100)": round(r["장당 가격(물가 반영)"] * 100, 1)})
+        if rows:
+            st.dataframe(pd.DataFrame(rows), hide_index=True)
+            st.caption(md(f"{end} 기준 최근 12개월입니다. 물가 반영 가격은 월별 물가로 금액을 나눠 계산하므로, "
+                          "명목 가격 지수를 소비자물가 지수로 나눈 값과 1~2%p 다를 수 있습니다."))
+        rows = []
+        for gname in genres:
+            if gname not in dec.index or dec.loc[gname].isna().all():
+                continue
+            r = dec.loc[gname]
+            c = contributions(r)
+            rows.append({"장르": name(gname),
+                         "명목 예매액 (2019=100)": round(r["명목 예매액"] * 100, 1),
+                         "예매수 (2019=100)": round(r["예매수"] * 100, 1),
+                         "장당 가격·물가 반영 (2019=100)": round(r["장당 가격(물가 반영)"] * 100, 1),
+                         "물가 요인 (2019=100)": round(r["물가 요인"] * 100, 1),
+                         "성장 몫: 관객 수 (%)": None if not c else round(c["관객 수"], 1),
+                         "성장 몫: 가격 (%)": None if not c else round(c["가격(물가 반영)"], 1),
+                         "성장 몫: 물가 (%)": None if not c else round(c["물가 상승"], 1)})
+        if rows:
+            st.markdown("##### 예매액 성장은 무엇에서 왔나 (최근 12개월, 2019년 대비)")
+            st.dataframe(pd.DataFrame(rows), hide_index=True)
+            st.caption(md("명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인입니다. 성장 몫은 명목 예매액이 늘어난 장르에서만 계산하며 "
+                          "세 요인의 합이 100%입니다. 음수는 그 요인이 성장을 깎았다는 뜻입니다."))
     else:
-        qp = in_range(ratio(to_quarterly(wa_n), to_quarterly(wc)), "분기별", start_ts, end_ts)
-        if qp.dropna(how="all").empty:
-            st.warning("선택한 기간에 해당하는 분기가 없습니다. 기간을 넓혀 주세요.")
-        else:
-            st.plotly_chart(make_line_figure(qp, genres, "만 원 (명목)", ref100=False, quarterly=True))
-            st.caption(md("분기별 장당 평균 가격(명목)입니다. 예매액과 예매수가 둘 다 양수인 분기만 계산합니다."))
+        st.info("종료 월을 2019-12 이후로 선택하면 물가와의 비교가 표시됩니다.")
 
 with tab_share:
     st.markdown(md("**음악 3장르 중 각 장르의 비중**입니다(분기별, 명목 예매액 기준). 규모가 한쪽으로 쏠려 있는지, 그 구성이 어떻게 바뀌었는지 확인하는 용도입니다."))
@@ -503,27 +487,9 @@ with tab_share:
         st.plotly_chart(make_share_figure(share))
         st.caption(md("예매액이 음수인 분기는 제외했습니다. 클래식과 국악이 차지하는 비중이 매우 작아 막대에서 잘 보이지 않을 수 있습니다."))
 
-with tab_data:
-    st.markdown(md("선택한 장르와 기간의 **월별 값**입니다. 내려받아 직접 확인할 수 있습니다."))
-    if not genres:
-        st.info("표시할 자료가 없습니다. 장르를 확인해 주세요.")
-    else:
-        sel = df[df["장르"].isin(genres) & (df["날짜"] >= start_ts) & (df["날짜"] <= end_ts)].copy()
-        if sel.empty:
-            st.info("표시할 자료가 없습니다. 기간을 확인해 주세요.")
-        else:
-            sel["장르"] = sel["장르"].map(name)
-            sel["장당 평균 가격(만 원)"] = np.where((sel["순예매수"] > 0) & (sel["순예매액"] > 0), sel["순예매액"] / sel["순예매수"], np.nan)
-            tbl = sel.sort_values(["날짜", "장르"])[["월", "장르", "순예매액", "실질예매액", "순예매수", "장당 평균 가격(만 원)"]].rename(
-                columns={"순예매액": "예매액(억 원)", "실질예매액": "예매액·물가 반영(억 원, 2019년 가격)", "순예매수": "예매수(만 장)"})
-            tbl = tbl.round(2)
-            st.dataframe(tbl, hide_index=True)
-            st.download_button("표를 CSV로 내려받기", tbl.to_csv(index=False).encode("utf-8-sig"),
-                               file_name="kopis_genre_selected.csv", mime="text/csv")
-
 # ---------------------------------------------------------------- 결론 (탭 아래)
 neg_view = int((in_range(wa_n, "월별", start_ts, end_ts)[genres] < 0).sum().sum()) if genres else 0
-sents = result_sentences(dec, share_ttm, share_base, end)
+sents = result_sentences(dec, cpi_end, share_ttm, share_base, end)
 with st.container(border=True):
     st.subheader("결론")
     for t in sents:
