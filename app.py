@@ -52,15 +52,6 @@ def md(text: str) -> str:
     """마크다운 문장용: ~ 사이의 글자에 취소선이 생기지 않도록 ~를 이스케이프."""
     return text.replace("~", "\\~")
 
-
-def josa(word: str, with_batchim: str, without: str) -> str:
-    """받침 유무에 따라 조사를 고른다(예: 은/는, 이/가, 으로/로)."""
-    ch = word[-1]
-    if "가" <= ch <= "힣":
-        return with_batchim if (ord(ch) - 0xAC00) % 28 else without
-    return with_batchim
-
-
 def qlabel(ts: pd.Timestamp) -> str:
     return f"{ts.year}Q{ts.quarter}"
 
@@ -96,12 +87,6 @@ def to_quarterly(w: pd.DataFrame) -> pd.DataFrame:
     q = w.groupby(per).sum().loc[full]
     q.index = q.index.to_timestamp()
     return q
-
-
-def ratio(a: pd.DataFrame, c: pd.DataFrame) -> pd.DataFrame:
-    """장당 평균 가격 = 금액 ÷ 수량. 금액이나 수량이 0 이하인 달(분기)은 계산하지 않는다."""
-    return (a / c.where(c > 0)).where(a > 0)
-
 
 def last12(w, end_ts: pd.Timestamp):
     return w[(w.index <= end_ts) & (w.index > end_ts - pd.DateOffset(months=12))]
@@ -262,10 +247,6 @@ def make_quadrant_figure(dec_all: pd.DataFrame, inc: pd.Series) -> go.Figure:
 
 
 # ---------------------------------------------------------------- 문장
-def fmt_pct(x: float) -> str:
-    return "-" if pd.isna(x) else f"{x:,.0f}%"
-
-
 def result_table(dec, ttm_amount, base_amount):
     """결론 표: 행 = 전체 공연 + 7개 장르, 열 = 예매액·예매수·장당 가격(2019년 연간 = 100%) + 비중(7개 장르 중)."""
     if dec is None:
@@ -569,14 +550,13 @@ with st.container(border=True):
     rt = result_table(dec, last12(wa_n, end_ts), wa_n[wa_n.index.year == BASE_YEAR].sum())
     if rt is not None:
         st.dataframe(style_extremes(rt))
-        cpi_txt = "" if pd.isna(cpi_end) else f"같은 기간 소비자물가 {cpi_end:.0f}%.  \n"
+        cpi_txt = "" if pd.isna(cpi_end) else f"같은 기간 소비자물가 {cpi_end:.0f}%."
         st.caption(md("예매액: 티켓 판매 금액(총 예매액 − 취소액).  \n"
                       "예매수: 판매 장수(총 예매수 − 취소수).  \n"
                       f"장당 가격: 예매액 ÷ 예매수(명목).{cpi_txt}  \n"
                       "비중: 7개 장르 예매액 합계 중 몫.  \n"
-                      "성장 기여도: (최근 12개월 − 2019년) 예매액 ÷ 2019년 전체 예매액. 장르별 합이 전체 성장분(%p). 복합·대중무용 분은 표에 없음.  \n"
-                      ))
-                      
+                      "성장 기여도: (최근 12개월 − 2019년) 예매액 ÷ 2019년 전체 예매액. 장르별 합이 전체 성장분(%p). 복합·대중무용 분은 표에 없음.
+                      ))   
     for t in sents:
         st.markdown("- " + md(t))
     if not sents:
