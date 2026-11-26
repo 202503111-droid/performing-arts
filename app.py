@@ -17,6 +17,12 @@ st.set_page_config(page_title="공연 음악 장르별 성장 양상", layout="w
 DATA_PATH = Path(__file__).parent / "data" / "kopis_genre_monthly.csv"
 CPI_PATH = Path(__file__).parent / "data" / "cpi_monthly.csv"
 DATA_DATE = "2026-11-26"       # 자료를 내려받은 날(KOPIS 최종집계 시점)
+def window_label(end_month):
+    """종료 월을 포함해 거꾸로 12개월인 기간을 '2025.11~2026.10'처럼 돌려준다."""
+    e = pd.Period(end_month, freq="M")
+    return f"{(e - 11).strftime('%Y.%m')}~{e.strftime('%Y.%m')}"
+
+
 LAST_MONTH = "2026-10"         # 마지막으로 끝난 달 (2026-11은 11/25까지의 부분 자료라 제외)
 BASE_YEAR = 2019               # 비교 기준 연도 (물가 반영 금액은 이 해의 평균 물가 기준 가격)
 
@@ -493,6 +499,7 @@ with tab_price:
                   "소비자물가는 최근 12개월 평균 지수입니다. 공연마다 가격 차이가 매우 커서 가격의 실제 값은 보여주지 않고 "
                   "2019년 대비 변화만 비교합니다. " + growth_note))
     if dec_all is not None:
+        st.markdown(f"##### 장당 가격과 소비자물가 (최근 12개월 {window_label(LAST_MONTH)}, 2019년 대비)")
         cpi_last = float(last12(price_s, last_ts).mean() * 100)
         rows = [{"장르": name(gname),
                  "장당 가격·명목 (2019=100)": round(dec_all.loc[gname, "장당 가격(명목)"] * 100, 1),
@@ -500,7 +507,7 @@ with tab_price:
                  "장당 가격·물가 반영 (2019=100)": round(dec_all.loc[gname, "장당 가격(물가 반영)"] * 100, 1)}
                 for gname in ALL if gname in dec_all.index and not dec_all.loc[gname].isna().all()]
         st.dataframe(pd.DataFrame(rows), hide_index=True)
-        st.caption(md(f"{LAST_MONTH} 기준 최근 12개월입니다. 물가 반영 가격은 월별 물가로 금액을 나눠 계산하므로, "
+        st.caption(md(f"최근 12개월({window_label(LAST_MONTH)}) 값입니다. 물가 반영 가격은 월별 물가로 금액을 나눠 계산하므로, "
                       "명목 가격 지수를 소비자물가 지수로 나눈 값과 1~2%p 다를 수 있습니다."))
 
     st.markdown("##### 가격은 물가를 따라 움직였나: 월별 전월 대비 변화")
@@ -551,7 +558,7 @@ with tab_price:
                          "성장 몫: 가격 (%)": None if not c else round(c["가격(물가 반영)"], 1),
                          "성장 몫: 물가 (%)": None if not c else round(c["물가 상승"], 1)})
         if rows:
-            st.markdown("##### 예매액 성장은 무엇에서 왔나 (최근 12개월, 2019년 대비)")
+            st.markdown(f"##### 예매액 성장은 무엇에서 왔나 (최근 12개월 {window_label(LAST_MONTH)}, 2019년 대비)")
             st.dataframe(pd.DataFrame(rows), hide_index=True)
             st.caption(md("명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인입니다. 성장 몫은 명목 예매액이 늘어난 장르에서만 계산하며 "
                           "세 요인의 합이 100%입니다. 음수는 그 요인이 성장을 깎았다는 뜻입니다."))
