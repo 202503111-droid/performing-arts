@@ -1,6 +1,6 @@
-"""공연 음악 장르별 성장 양상 대시보드
+"""공연예술 장르별 성장 양상 대시보드
 
-질문: 2019년 이후 공연 음악 장르(대중음악·클래식·국악)는 얼마나 성장했고, 그 성장은 관객 수와 가격 중 무엇에서 나왔는가?
+질문: 2019년 이후 공연예술(전체와 장르별)은 얼마나 성장했고, 그 성장은 관객 수와 가격 중 무엇에서 나왔는가?
 자료: 예술경영지원센터 공연예술통합전산망(KOPIS) 예매통계 장르별통계 (월 단위로 조회해 합침)
       국가데이터처(통계청) 소비자물가지수 총지수(2020=100) 월별 — 물가 비교·물가 반영 계산용
 """
@@ -11,7 +11,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-st.set_page_config(page_title="공연 음악 장르별 성장 양상", layout="wide")
+st.set_page_config(page_title="공연예술 장르별 성장 양상", layout="wide")
 
 # ---------------------------------------------------------------- 설정
 DATA_PATH = Path(__file__).parent / "data" / "kopis_genre_monthly.csv"
@@ -26,12 +26,13 @@ def window_label(end_month):
 LAST_MONTH = "2026-10"         # 마지막으로 끝난 달 (2026-11은 11/25까지의 부분 자료라 제외)
 BASE_YEAR = 2019               # 비교 기준 연도 (물가 반영 금액은 이 해의 평균 물가 기준 가격)
 
-MUSIC = ["대중음악", "서양음악(클래식)", "한국음악(국악)"]
-COMPARE = ["뮤지컬", "연극", "합계"]
-LABEL = {"서양음악(클래식)": "클래식", "한국음악(국악)": "국악", "합계": "전체 공연"}
-# 색: 검증된 범주형 팔레트의 앞 5색을 장르에 고정해서 배정(선택이 바뀌어도 같은 장르는 같은 색). 합계는 무채색.
+# 개별 표시 장르 7개 + 전체 합계. 복합·대중무용은 규모가 매우 작아(합계의 0.3% 안팎) 개별 표시에서 빼고 합계에만 포함된다.
+GENRES = ["대중음악", "뮤지컬", "연극", "서양음악(클래식)", "한국음악(국악)", "무용(서양/한국무용)", "서커스/마술"]
+TOTAL = ["합계"]
+LABEL = {"서양음악(클래식)": "클래식", "한국음악(국악)": "국악", "무용(서양/한국무용)": "무용", "합계": "전체 공연"}
+# 색: 검증된 범주형 팔레트의 앞 7색을 장르에 고정해서 배정(선택이 바뀌어도 같은 장르는 같은 색). 합계는 무채색.
 COLORS = {"대중음악": "#2a78d6", "서양음악(클래식)": "#eb6834", "한국음악(국악)": "#1baf7a",
-          "뮤지컬": "#eda100", "연극": "#e87ba4", "합계": "#9aa0a8"}
+          "뮤지컬": "#eda100", "연극": "#e87ba4", "무용(서양/한국무용)": "#008300", "서커스/마술": "#6250d6", "합계": "#9aa0a8"}
 CPI_COLOR = "#6b7380"
 NAVY = "#14284b"
 INK = "#3a4150"
@@ -254,12 +255,12 @@ def make_line_figure(s: pd.DataFrame, genres: list, ytitle: str, ref100: bool, q
 def make_share_figure(share: pd.DataFrame) -> go.Figure:
     fig = go.Figure()
     xs = [qlabel(t) for t in share.index]
-    for g in MUSIC:
+    for g in GENRES:
         fig.add_trace(go.Bar(
             x=xs, y=share[g], name=name(g), marker=dict(color=COLORS[g], line=dict(color="white", width=2)),
             hovertemplate="<b>" + name(g) + "</b><br>%{x}<br>%{y:.1f}%<extra></extra>"))
     fig.update_layout(barmode="stack")
-    fig.update_yaxes(title="음악 3장르 중 비중 (%)", range=[0, 100])
+    fig.update_yaxes(title="7개 장르 중 비중 (%)", range=[0, 100])
     fig.update_xaxes(type="category", tickangle=-45)
     return style(fig)
 
@@ -290,20 +291,46 @@ def make_mom_figure(fr: pd.DataFrame, g: str, include_covid: bool, fit) -> go.Fi
     return style(fig)
 
 
+def make_quadrant_figure(dec_all: pd.DataFrame, inc: pd.Series) -> go.Figure:
+    """관객 수 배수(가로) vs 물가 반영 가격 배수(세로). 점 크기 = 예매액 증가분. 전체 공연은 회색 마름모."""
+    fig = go.Figure()
+    top = float(inc[GENRES].clip(lower=0).max()) or 1.0
+    for g in GENRES + TOTAL:
+        if g not in dec_all.index:
+            continue
+        q, p = dec_all.loc[g, "예매수"], dec_all.loc[g, "장당 가격(물가 반영)"]
+        if pd.isna(q) or pd.isna(p):
+            continue
+        if g == "합계":
+            marker = dict(symbol="diamond", size=16, color=COLORS[g], line=dict(color="white", width=1.5))
+        else:
+            size = 14 + 56 * (max(float(inc.get(g, 0)), 0) / top) ** 0.5
+            marker = dict(size=size, color=COLORS[g], opacity=0.85, line=dict(color="white", width=1.5))
+        fig.add_trace(go.Scatter(
+            x=[q], y=[p], mode="markers+text", name=name(g), text=[name(g)], textposition="top center", marker=marker,
+            hovertemplate=f"<b>{name(g)}</b><br>예매수 %{{x:.2f}}배<br>가격(물가 반영) %{{y:.2f}}배<br>증가분 {float(inc.get(g, 0)):,.0f}억 원<extra></extra>"))
+    fig.add_hline(y=1, line_dash="dot", line_color="#b4bac4", line_width=1)
+    fig.add_vline(x=1, line_dash="dot", line_color="#b4bac4", line_width=1)
+    fig.update_xaxes(title="예매수 (2019년 연간 = 1배)")
+    fig.update_yaxes(title="장당 가격, 물가 반영 (2019년 연간 = 1배)")
+    fig.update_layout(showlegend=False)
+    return style(fig)
+
+
 # ---------------------------------------------------------------- 문장
 def fmt_pct(x: float) -> str:
     return "-" if pd.isna(x) else f"{x:,.0f}%"
 
 
-def result_sentences(dec, cpi_end: float, share_now: float, share_base: float, end: str) -> list:
+def result_sentences(dec, cpi_end: float, share_now: float, share_base: float, end: str, top_inc: str = None) -> list:
     out = []
     if dec is not None:
-        m = dec.loc[[g for g in MUSIC if g in dec.index]]
+        m = dec.loc[[g for g in GENRES + TOTAL if g in dec.index]]
 
-        def line(col, label, extra=""):
+        def line(col, label):
             parts = [f"{name(g)} {fmt_pct(m.loc[g, col] * 100)}" for g in m.index if not pd.isna(m.loc[g, col])]
             if parts:
-                out.append(f"{end} 기준 최근 12개월 {label}{josa(label, '은', '는')} 2019년 연간 대비 " + ", ".join(parts) + f"입니다{extra}.")
+                out.append(f"**{label}** (최근 12개월 ÷ 2019년 연간, {end} 기준): " + ", ".join(parts))
         line("명목 예매액", "예매액")
         line("예매수", "예매수")
         line("장당 가격(명목)", "장당 평균 가격")
@@ -311,18 +338,17 @@ def result_sentences(dec, cpi_end: float, share_now: float, share_base: float, e
             parts = [f"{name(g)} {fmt_pct(m.loc[g, '장당 가격(물가 반영)'] * 100)}" for g in m.index
                      if not pd.isna(m.loc[g, "장당 가격(물가 반영)"])]
             if parts:
-                out.append(f"같은 기간 소비자물가는 2019년의 {cpi_end:.0f}%였고, 물가를 반영한 장당 가격은 " + ", ".join(parts) + "입니다.")
-        top = m["명목 예매액"].dropna()
-        if not top.empty:
-            g = top.idxmax()
-            c = contributions(m.loc[g])
-            if c:
-                out.append(f"예매액이 가장 크게 성장한 {name(g)}의 성장은 로그 기준으로 관객 수 {c['관객 수']:.0f}%, "
-                           f"물가를 뺀 가격 상승 {c['가격(물가 반영)']:.0f}%, 물가 상승 {c['물가 상승']:.0f}%에서 나왔습니다.")
+                out.append(f"**물가 반영 장당 가격:** " + ", ".join(parts) + f" (소비자물가 {cpi_end:.0f}%)")
+        for g, lead in [("합계", "전체 공연"), (top_inc, f"{name(top_inc) if top_inc else ''}(증가분 1위)")]:
+            if g and g in dec.index:
+                c = contributions(dec.loc[g])
+                if c:
+                    out.append(f"**{lead} 성장의 구성** (로그 기준): 관객 수 {c['관객 수']:.0f}%, "
+                               f"가격(물가 반영) {c['가격(물가 반영)']:.0f}%, 물가 {c['물가 상승']:.0f}%")
     if not (pd.isna(share_now) or pd.isna(share_base)):
-        out.append(f"음악 3장르 중 대중음악의 비중(예매액 기준)은 2019년 {share_base:.0f}%에서 최근 12개월 {share_now:.0f}%입니다.")
+        out.append(f"**대중음악 비중** (7개 장르 중, 예매액): 2019년 {share_base:.0f}% → 최근 12개월 {share_now:.0f}%")
     elif not pd.isna(share_now):
-        out.append(f"음악 3장르 중 대중음악의 비중은 최근 12개월 예매액 기준 {share_now:.0f}%입니다.")
+        out.append(f"**대중음악 비중** (7개 장르 중, 예매액): 최근 12개월 {share_now:.0f}%")
     return out
 
 
@@ -331,13 +357,13 @@ def limit_lines(neg_months: int, share: float) -> list:
         "**예매액:** 예매일자 기준(공연일 아님), 주최자 수익 아님."
         + (f" 선택 기간에 월 값이 음수인 경우 {neg_months}건(취소 집중)." if neg_months else " 취소가 몰린 달은 음수 가능."),
         "**코로나 시기 하락:** 수요 감소 + 대규모 취소가 섞인 값.",
-        "**2019년 기준이 낮음:** 집계 범위 확대가 섞였을 수 있고, 2019년 상반기는 하반기보다 크게 낮음.",
+        "**2019년 기준이 낮음:** 2019.6.25 공연법 개정으로 전송이 의무화됨. 그 전 집계는 불완전해 2019년 상반기가 하반기보다 크게 낮고, 2019년 대비 성장에 집계 확대가 섞임.",
         "**물가 반영:** 소비자물가지수(총지수) 기준이라 공연 고유의 물가와 다를 수 있음.",
         "**장당 가격 상승:** 좌석 등급·할인·공연 구성 변화를 포함하므로 가격 인상만을 뜻하지 않음.",
-        "**규모 쏠림:**" + (f" 대중음악이 음악 3장르의 {share:.0f}%." if not pd.isna(share) else "")
-        + " 국악·클래식은 소수 공연에도 지수가 크게 흔들려 장르 간 동일 비교는 부적절.",
-        "**집계 범위:** 전산 발권 공연만 포함. 무료·현장 판매 중심 공연은 과소 집계 가능.",
-        "**대상:** 공연 티켓 시장. 음원·스트리밍 소비는 제외.",
+        "**규모 차이:**" + (f" 대중음악이 7개 장르의 {share:.0f}%." if not pd.isna(share) else "")
+        + " 서커스/마술·국악·무용은 소수 공연에도 지수가 크게 흔들려 장르 간 동일 비교는 부적절.",
+        "**집계 범위:** 전산 발권 공연만 포함. 수기 발권·무료 공연은 제외되어 과소 집계 가능.",
+        "**대상:** 공연 티켓 시장. 음원·스트리밍 등 다른 문화 소비는 제외. 복합·대중무용은 규모가 작아 개별 표시 없이 전체에만 포함.",
     ]
 
 
@@ -367,39 +393,41 @@ div[data-baseweb="tab-highlight"] {{ background-color: {NAVY}; height: 3px; }}
 </style>
 <div class="banner">
 <div class="eyebrow">예술경영지원센터 공연예술통합전산망(KOPIS) · 예매통계</div>
-<div class="title">공연 음악 장르별 성장 양상 대시보드</div>
-<div class="lead">2019년 이후 공연 음악 장르(대중음악·클래식·국악)는 얼마나 성장했고, 그 성장은 관객 수와 가격 중 무엇에서 나왔는가?</div>
+<div class="title">공연예술 장르별 성장 양상 대시보드</div>
+<div class="lead">2019년 이후 공연예술(전체와 장르별)은 얼마나 성장했고, 그 성장은 관객 수와 가격 중 무엇에서 나왔는가?</div>
 </div>
 """, unsafe_allow_html=True)
-st.caption(md("왼쪽에서 장르와 기간을 바꾸면 차트가 함께 바뀝니다. 금액은 예매에서 취소를 뺀 예매액이며 "
-              f"예매일자 기준입니다. 자료 조회일 {DATA_DATE}."))
+st.caption(md(f"왼쪽에서 장르·기간을 바꾸면 차트가 함께 바뀜. 금액은 예매에서 취소를 뺀 예매일자 기준 예매액. 자료 조회일 {DATA_DATE}."))
 
 months = [m for m in sorted(df["월"].unique())]
 with st.sidebar:
     st.header("조건 선택")
-    genres = st.multiselect("장르 (차트에 표시)", MUSIC + COMPARE, default=MUSIC, format_func=name,
-                            help="핵심 지표와 결론은 항상 음악 3장르(대중음악·클래식·국악) 기준입니다. 뮤지컬·연극·전체 공연은 비교용입니다.")
+    genres = st.multiselect("장르 (차트에 표시)", TOTAL + GENRES, default=["합계", "대중음악", "뮤지컬", "연극", "서양음악(클래식)"], format_func=name,
+                            help="핵심 지표·결론은 항상 전체 공연과 7개 장르 기준. 선택은 차트 선만 바꿈.")
     start = st.selectbox("시작 월", months, index=0)
     end = st.selectbox("종료 월", months, index=len(months) - 1)
 
 if start >= end:
-    st.error("시작 월이 종료 월보다 앞서야 합니다. 기간을 다시 선택해 주세요.")
+    st.error("시작 월이 종료 월보다 앞서야 함. 기간을 다시 선택.")
     st.stop()
 
 start_ts, end_ts = pd.Timestamp(start + "-01"), pd.Timestamp(end + "-01")
 wa_n, wa_r, wc = monthly_wide(df, "순예매액"), monthly_wide(df, "실질예매액"), monthly_wide(df, "순예매수")
 dec = decompose(wa_n, wa_r, wc, end_ts)
-mrow = dec.loc[[g for g in MUSIC if g in dec.index]] if dec is not None else None
+mrow = dec.loc[[g for g in GENRES if g in dec.index]] if dec is not None else None
 
 
 def share_of(frame: pd.DataFrame):
-    """음악 3장르 중 대중음악의 몫(%, 예매액 기준). 12개월이 모두 있고 합계가 양수일 때만."""
-    f = frame[MUSIC]
+    """7개 장르 중 대중음악의 몫(%, 예매액 기준). 12개월이 모두 있고 합계가 양수일 때만."""
+    f = frame[GENRES]
     return float(f["대중음악"].sum() / f.sum().sum() * 100) if len(f) == 12 and f.sum().sum() > 0 else np.nan
 
 
 share_ttm = share_of(last12(wa_n, end_ts))
 share_base = np.nan if end_ts <= pd.Timestamp(f"{BASE_YEAR}-12-01") else share_of(wa_n[wa_n.index.year == BASE_YEAR])
+# 예매액이 2019년 연간보다 가장 많이 늘어난 장르(규모 차이를 보완하려고 증가율이 아니라 증가분 기준)
+_inc = (last12(wa_n, end_ts)[GENRES].sum() - wa_n[wa_n.index.year == BASE_YEAR][GENRES].sum()) if len(last12(wa_n, end_ts)) == 12 else None
+top_inc = None if _inc is None or _inc.isna().all() or end_ts <= pd.Timestamp(f"{BASE_YEAR}-12-01") else _inc.idxmax()
 
 
 _l12 = last12(price_s, end_ts)
@@ -419,23 +447,30 @@ def kpi(col, title: str, value: str, sub: str, help_text: str):
             st.caption(md(sub))
 
 
-st.caption(md(f"{start} ~ {end} · 핵심 지표는 종료 월까지 최근 12개월을 2019년 연간과 비교한 값입니다."))
-k1, k2, k3, k4 = st.columns(4)
-need = "종료 월을 2019-12 이후로 선택하세요"
+st.caption(md(f"{start} ~ {end} · 핵심 지표: 종료 월까지 최근 12개월 ÷ 2019년 연간"))
+k0, k1, k2, k3, k4 = st.columns(5)
+need = "종료 월을 2019-12 이후로 선택"
+_tot = dec.loc["합계", "명목 예매액"] if dec is not None and "합계" in dec.index else np.nan
+if pd.isna(_tot):
+    kpi(k0, "전체 공연 예매액", "-", need, "전체 공연 최근 12개월 예매액 ÷ 2019년 연간.")
+else:
+    kpi(k0, "전체 공연 예매액", f"{_tot * 100:,.0f}%", "최근 12개월 ÷ 2019년 연간",
+        "복합·대중무용 포함 전체 공연의 예매액.")
+_a19 = wa_n[wa_n.index.year == BASE_YEAR][GENRES].sum()
 for col, title, key, what in [
-        (k1, "예매액 성장 1위", "명목 예매액", "예매액"),
-        (k2, "관객 수(예매수) 성장 1위", "예매수", "예매수"),
-        (k3, "장당 가격 성장 1위", "장당 가격(명목)", "장당 평균 가격")]:
+        (k1, "예매액 성장 1위 장르", "명목 예매액", "예매액"),
+        (k2, "관객 수 성장 1위 장르", "예매수", "예매수"),
+        (k3, "장당 가격 성장 1위 장르", "장당 가격(명목)", "장당 평균 가격")]:
     ser = mrow[key].dropna() if mrow is not None else pd.Series(dtype=float)
     if ser.empty:
-        kpi(col, title, "-", need, f"음악 3장르 중, 최근 12개월 {what}이 2019년 연간의 몇 %인지 비교합니다.")
+        kpi(col, title, "-", need, f"7개 장르 중 최근 12개월 {what} ÷ 2019년 연간이 가장 높은 장르.")
     else:
         top = ser.idxmax()
-        kpi(col, title, name(top), f"최근 12개월이 2019년의 {ser[top] * 100:,.0f}%",
-            f"음악 3장르 중, 종료 월까지 최근 12개월 {what}이 2019년 연간의 몇 %인지 가장 높은 장르입니다.")
-kpi(k4, "대중음악 비중 (음악 3장르)", "-" if pd.isna(share_ttm) else f"{share_ttm:.0f}%",
+        kpi(col, title, name(top), f"2019년의 {ser[top] * 100:,.0f}% (2019년 예매액 {_a19[top]:,.0f}억 원)",
+            f"7개 장르 중 최근 12개월 {what} ÷ 2019년 연간이 가장 높은 장르. 소규모 장르가 1위일 수 있어 2019년 예매액 병기.")
+kpi(k4, "대중음악 비중 (7개 장르)", "-" if pd.isna(share_ttm) else f"{share_ttm:.0f}%",
     "최근 12개월 예매액 기준" + ("" if pd.isna(share_base) else f" (2019년 {share_base:.0f}%)"),
-    "대중음악 + 클래식 + 국악 합계 중 대중음악의 몫입니다. 규모가 한쪽으로 쏠려 있어 장르 비교에 주의가 필요합니다.")
+    "7개 장르 합계 중 대중음악의 몫.")
 
 with st.expander("용어 풀이"):
     st.markdown(md(
@@ -445,56 +480,55 @@ with st.expander("용어 풀이"):
         f"- **물가 반영 가격:** 장당 가격 ÷ (월별 소비자물가지수 ÷ {BASE_YEAR}년 평균).\n"
         f"- **물가 요인:** 최근 12개월 평균 소비자물가지수 ÷ {BASE_YEAR}년 평균.\n"
         "- **성장의 구성:** 명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인. 몫은 로그 기준, 합 100%.\n"
-        "- **비중:** 3장르 합계 중 각 장르의 몫."))
+        "- **비중:** 7개 장르 합계 중 각 장르의 몫."))
 
 tab_rev, tab_cnt, tab_price, tab_share = st.tabs(["1. 예매액", "2. 예매수", "3. 장당 가격과 물가", "장르 비중"])
 
-growth_note = ("각 점은 그 달까지 최근 12개월 합계를 2019년 연간 합계와 비교한 값입니다(2019-12에 100에서 시작). "
-               "음영은 설명용 참고 구간(국내 첫 확진~거리두기 전면 해제)이며 분석 기준이 아닙니다.")
-level_note = "월별 값입니다. 계절성이 있고, 취소가 몰린 달에는 값이 작아지거나 음수가 될 수 있습니다. 규모가 작은 장르는 성장 보기에서 흐름을 비교하세요."
+growth_note = ("각 점: 그 달까지 최근 12개월 합계 ÷ 2019년 연간(2019-12 = 100). "
+               "음영: 참고용 코로나 구간(첫 확진~거리두기 전면 해제), 분석 기준 아님.")
+level_note = "월별 값. 계절성이 있고, 취소가 몰린 달은 작아지거나 음수. 소규모 장르는 성장 보기에서 비교."
 
 
 def growth_tab(w_all: pd.DataFrame, level_title: str, key: str, label: str):
     view = st.radio("보기", [GROWTH_VIEW, LEVEL_VIEW], horizontal=True, key=key)
     if not genres:
-        st.info("왼쪽에서 장르를 하나 이상 선택해 주세요.")
+        st.info("왼쪽에서 장르를 하나 이상 선택.")
     elif view == GROWTH_VIEW:
         g = window(rolling_index(w_all))
         if g.dropna(how="all").empty:
-            st.warning("선택한 기간에 계산할 값이 없습니다. 종료 월을 2019-12 이후로, 기간을 넓혀 주세요.")
+            st.warning("선택 기간에 계산할 값 없음. 종료 월을 2019-12 이후로, 기간을 넓힐 것.")
         else:
             st.plotly_chart(make_line_figure(g, genres, "2019년 연간 = 100 (최근 12개월 합계 기준)", ref100=True, quarterly=False,
                                              hover_suffix=" (최근 12개월)"))
-            st.caption(md(growth_note + (" 금액은 물가를 반영하지 않은 명목값입니다." if label == "예매액" else "")))
+            st.caption(md(growth_note + (" 명목 금액(물가 미반영)." if label == "예매액" else "")))
     else:
         mv = window(w_all)
         if mv.empty:
-            st.warning("선택한 기간에 해당하는 값이 없습니다. 기간을 넓혀 주세요.")
+            st.warning("선택 기간에 해당 값 없음. 기간을 넓힐 것.")
         else:
             st.plotly_chart(make_line_figure(mv, genres, level_title, ref100=False, quarterly=False))
             st.caption(md(level_note))
 
 
 with tab_rev:
-    st.markdown(md("**예매액**(티켓 판매 금액)은 얼마나 늘었는가?"))
+    st.markdown(md("**예매액**(티켓 판매 금액): 얼마나 늘었나?"))
     growth_tab(wa_n, "억 원", "rev_view", "예매액")
 
 with tab_cnt:
-    st.markdown(md("**예매수**(티켓 판매 장수)는 얼마나 늘었는가?"))
+    st.markdown(md("**예매수**(티켓 판매 장수): 얼마나 늘었나?"))
     growth_tab(wc, "만 장", "cnt_view", "예매수")
 
 with tab_price:
-    ALL = MUSIC + COMPARE
+    ALL = GENRES + TOTAL
     last_ts = pd.Timestamp(LAST_MONTH + "-01")
     dec_all = decompose(wa_n, wa_r, wc, last_ts)
-    st.markdown(md("**장당 평균 가격**(예매액 ÷ 예매수)은 물가보다 더 올랐는가? 소비자물가지수는 이 탭에서만 사용합니다. "
-                   f"이 탭은 왼쪽에서 고른 장르·기간과 상관없이 **전체 장르, 전체 기간(2019~{LAST_MONTH.replace('-', '.')})**을 보여줍니다."))
+    st.markdown(md("**장당 평균 가격**(예매액 ÷ 예매수): 물가보다 더 올랐나? 소비자물가지수는 이 탭에서만 사용. "
+                   f"장르·기간 선택과 무관하게 **전체 장르·전체 기간(2019~{LAST_MONTH.replace('-', '.')})** 표시."))
     g = rolling_index(wa_n, denom=wc)
     st.plotly_chart(make_line_figure(g, ALL, "2019년 연간 = 100 (최근 12개월 기준)", ref100=True, quarterly=False,
                                      cpi=rolling_price_level(price_s), hover_suffix=" (최근 12개월)"))
-    st.caption(md("장르 선이 점선(소비자물가)보다 위에 있으면 물가 상승분을 넘어 가격이 올랐다는 뜻입니다. 가격은 명목값이고, "
-                  "소비자물가는 최근 12개월 평균 지수입니다. 공연마다 가격 차이가 매우 커서 가격의 실제 값은 보여주지 않고 "
-                  "2019년 대비 변화만 비교합니다. " + growth_note))
+    st.caption(md("장르 선이 점선(소비자물가)보다 위면 물가 이상으로 오른 것. 명목 가격 지수이며 물가는 최근 12개월 평균 지수. "
+                  "공연별 가격 차가 커서 실제 가격은 생략하고 2019년 대비 변화만 비교. " + growth_note))
     if dec_all is not None:
         st.markdown(f"##### 장당 가격과 소비자물가 (최근 12개월 {window_label(LAST_MONTH)}, 2019년 대비)")
         cpi_last = float(last12(price_s, last_ts).mean() * 100)
@@ -504,25 +538,25 @@ with tab_price:
                  "장당 가격·물가 반영 (2019=100)": round(dec_all.loc[gname, "장당 가격(물가 반영)"] * 100, 1)}
                 for gname in ALL if gname in dec_all.index and not dec_all.loc[gname].isna().all()]
         st.dataframe(pd.DataFrame(rows), hide_index=True)
-        st.caption(md(f"최근 12개월({window_label(LAST_MONTH)}) 값입니다. 물가 반영 가격은 월별 물가로 금액을 나눠 계산하므로, "
-                      "명목 가격 지수를 소비자물가 지수로 나눈 값과 1~2%p 다를 수 있습니다."))
+        st.caption(md(f"최근 12개월({window_label(LAST_MONTH)}) 값. 물가 반영 가격은 월별 물가로 나눠 계산해, "
+                      "명목 가격 지수 ÷ 물가지수와 1~2%p 차이 가능."))
 
     st.markdown("##### 가격은 물가를 따라 움직였나: 월별 전월 대비 변화")
-    st.markdown(md("한 점이 한 달입니다. 가로축은 그 달 소비자물가가 전월보다 몇 % 변했는지, 세로축은 그 달 장당 평균 가격이 전월보다 몇 % 변했는지입니다. "
-                   "물가가 많이 오른 달에 가격도 많이 올랐다면 점들이 오른쪽 위로 늘어섭니다."))
+    st.markdown(md("한 점 = 한 달. 가로축: 소비자물가 전월 대비(%), 세로축: 장당 평균 가격 전월 대비(%). "
+                   "물가가 큰 달에 가격도 컸다면 점이 오른쪽 위로 늘어섬."))
     c1, c2 = st.columns([2, 3])
     with c1:
         gsel = st.selectbox("산점도로 볼 장르", ALL, format_func=name, key="mom_genre")
     with c2:
         inc_cv = st.checkbox("코로나 시기(2020.02~2022.04) 포함", value=True, key="mom_covid",
-                             help="이 시기에는 판매가 거의 없고 취소가 몰려 가격이 의미 없이 크게 튑니다. 아래 표에는 포함·제외 결과를 나란히 보여줍니다.")
+                             help="이 시기는 판매가 적고 취소가 몰려 가격이 크게 튐. 아래 표에 포함·제외 결과 병기.")
     fr = monthly_change_frame(wa_n, wc, price_s, gsel)
     fit_sel = mom_regression(fr, inc_cv)
     st.plotly_chart(make_mom_figure(fr, gsel, inc_cv, fit_sel))
     if fit_sel is not None:
         used = fr if inc_cv else fr[~fr["코로나"]]
         st.caption(md(f"{name(gsel)}: 기울기 {fit_sel[0]:.1f} ± {fit_sel[1]:.1f}, R² {fit_sel[2]:.3f}, {fit_sel[3]}개월. "
-                      f"소비자물가의 전월 대비 변화는 표준편차 {used['물가'].std():.1f}%인데, 장당 가격은 {used['가격'].std():.0f}%로 훨씬 크게 흔들립니다."))
+                      f"물가 전월 대비 변화의 표준편차 {used['물가'].std():.1f}%, 장당 가격은 {used['가격'].std():.0f}%로 훨씬 큼."))
     rows = []
     for gname in ALL:
         frg = monthly_change_frame(wa_n, wc, price_s, gname)
@@ -534,10 +568,9 @@ with tab_price:
                      "코로나 제외: R²": None if b_ is None else round(b_[2], 3),
                      "개월 수 (전체 / 제외)": f"{'-' if a_ is None else a_[3]} / {'-' if b_ is None else b_[3]}"})
     st.dataframe(pd.DataFrame(rows), hide_index=True)
-    st.caption(md("**읽는 법:** 기울기는 ‘소비자물가가 전월보다 1% 오른 달에 장당 가격이 평균 몇 % 변했는가’이고, R²는 가격 변화 중 물가 변화로 설명되는 비율입니다. "
-                  "R²가 0에 가까우면 월별 가격 변화는 물가와 관계가 없다는 뜻입니다. 가격은 그 달에 어떤 공연이 많이 팔렸는지에 따라 달라지고, "
-                  "물가는 한 달에 0.3% 안팎으로만 변하기 때문입니다. 코로나 시기(전후 한 달 포함)는 포함해도 제외해도 결론이 같은지 확인하려고 나란히 두었습니다. "
-                  "표준오차는 자기상관이 있으면 실제보다 작게 나옵니다. 인과가 아니라 ‘함께 움직인 정도’로만 해석하세요."))
+    st.caption(md("**읽는 법:** 기울기 = 물가가 전월보다 1% 오른 달의 장당 가격 평균 변화(%). R² = 가격 변화 중 물가로 설명되는 비율. "
+                  "R²≈0이면 월별로는 관계가 보이지 않음(가격은 그 달 판매 공연 구성에 좌우되고, 물가는 월 0.3% 안팎). "
+                  "코로나 시기(전후 1개월 포함)는 포함·제외를 병기. 표준오차는 자기상관 때문에 실제보다 작을 수 있음. 인과가 아닌 동행 정도로만 해석."))
 
     if dec_all is not None:
         rows = []
@@ -557,30 +590,35 @@ with tab_price:
         if rows:
             st.markdown(f"##### 예매액 성장은 무엇에서 왔나 (최근 12개월 {window_label(LAST_MONTH)}, 2019년 대비)")
             st.dataframe(pd.DataFrame(rows), hide_index=True)
-            st.caption(md("명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인입니다. 성장 몫은 명목 예매액이 늘어난 장르에서만 계산하며 "
-                          "세 요인의 합이 100%입니다. 음수는 그 요인이 성장을 깎았다는 뜻입니다."))
+            st.caption(md("명목 예매액 = 예매수 × 장당 가격(물가 반영) × 물가 요인. 몫은 명목 예매액이 늘어난 장르만 계산, 세 요인 합 100%. 음수는 성장을 깎은 요인."))
+
+            st.markdown("##### 관객 수 vs 가격: 성장은 어느 쪽에서 왔나")
+            _inc_all = last12(wa_n, last_ts).sum() - wa_n[wa_n.index.year == BASE_YEAR].sum()
+            st.plotly_chart(make_quadrant_figure(dec_all, _inc_all))
+            st.caption(md("최근 12개월 ÷ 2019년 연간. 점 크기: 예매액 증가분(억 원). 오른쪽일수록 관객 증가, 위쪽일수록 물가 이상의 가격 상승. "
+                          "회색 마름모: 전체 공연. 규모가 작은 장르는 기준에 따라 크게 흔들림."))
 
 with tab_share:
-    st.markdown(md("**음악 3장르 중 각 장르의 비중**입니다(분기별, 명목 예매액 기준). 규모가 한쪽으로 쏠려 있는지, 그 구성이 어떻게 바뀌었는지 확인하는 용도입니다."))
-    qa = to_quarterly(wa_n)[MUSIC]
+    st.markdown(md("**7개 장르 비중**(분기별, 명목 예매액 기준). 장르 구성 변화 확인용."))
+    qa = to_quarterly(wa_n)[GENRES]
     qa = in_range(qa, "분기별", start_ts, end_ts)
     qa = qa[(qa > 0).all(axis=1)]            # 취소가 몰려 음수가 된 분기는 비중을 계산하지 않음
     if qa.empty:
-        st.warning("선택한 기간에 비중을 계산할 분기가 없습니다. 기간을 넓혀 주세요.")
+        st.warning("선택 기간에 비중을 계산할 분기 없음. 기간을 넓힐 것.")
     else:
         share = qa.div(qa.sum(axis=1), axis=0) * 100
         st.plotly_chart(make_share_figure(share))
-        st.caption(md("예매액이 음수인 분기는 제외했습니다. 클래식과 국악이 차지하는 비중이 매우 작아 막대에서 잘 보이지 않을 수 있습니다."))
+        st.caption(md("예매액이 음수인 분기는 제외. 비중이 작은 장르는 막대에서 안 보일 수 있음."))
 
 # ---------------------------------------------------------------- 결론 (탭 아래)
 neg_view = int((in_range(wa_n, "월별", start_ts, end_ts)[genres] < 0).sum().sum()) if genres else 0
-sents = result_sentences(dec, cpi_end, share_ttm, share_base, end)
+sents = result_sentences(dec, cpi_end, share_ttm, share_base, end, top_inc)
 with st.container(border=True):
     st.subheader("결론")
     for t in sents:
         st.markdown("- " + md(t))
     if not sents:
-        st.markdown("- 선택한 조건에서는 문장으로 요약할 결과가 없습니다. 종료 월과 기간을 확인해 주세요.")
+        st.markdown("- 선택 조건에서 요약할 결과 없음. 종료 월과 기간을 확인.")
 with st.expander("이 결론의 한계", expanded=True):
     for t in limit_lines(neg_view, share_ttm):
         st.markdown("- " + md(t))
@@ -591,6 +629,7 @@ with st.expander("출처와 집계 기준"):
         f"- **조회일:** {DATA_DATE} (최종집계 2026.11.26). 통계 갱신에 따라 값이 달라질 수 있음.\n"
         "- **물가:** 국가데이터처(통계청) 소비자물가지수 총지수(2020=100), 월별. 연평균·최근 월 값을 공식 통계와 대조.\n"
         f"- **기간:** 2019.01~{LAST_MONTH.replace('-', '.')}. 2026.11은 11/25까지의 부분 자료라 제외.\n"
+        "- **2019년 집계:** 2019.6.25 개정 공연법 시행으로 예매처·제작사의 전송이 의무화됨. 그 전에는 동의한 제작사만 집계(포괄율 약 38%, 2017년 기준).\n"
         "- **단위:** 예매액은 천원을 억 원으로, 예매수는 만 장으로 환산. 예매액·예매수 모두 예매에서 취소를 뺀 값(예매일자 기준).\n"
         "- **공연건수:** 월별 합산 시 중복이 생겨 사용하지 않음.\n"
         "- **장르 분류:** KOPIS가 2023.01 장르를 개편함. 개편 전후의 정의 차이는 미확인.\n"
