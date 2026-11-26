@@ -575,7 +575,7 @@ with st.container(border=True):
                       "장당 가격: 예매액 ÷ 예매수(명목).  \n"
                       "비중: 7개 장르 예매액 합계 중 몫.  \n"
                       "성장 기여도: (최근 12개월 − 2019년) 예매액 ÷ 2019년 전체 예매액. 장르별 합이 전체 성장분(%p). 복합·대중무용 분은 표에 없음.  \n"
-                      + cpi_txt +))
+                      + cpi_txt))
                       
     for t in sents:
         st.markdown("- " + md(t))
