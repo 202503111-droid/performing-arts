@@ -494,11 +494,11 @@ def growth_tab(w_all: pd.DataFrame, level_title: str, key: str, label: str):
 
 
 with tab_rev:
-    st.markdown(md("**예매액**(티켓 판매 금액): 얼마나 늘었나?"))
+    st.markdown(md("**예매액 추이**(티켓 판매 금액 = 총 예매액 − 취소액)"))
     growth_tab(wa_n, "억 원", "rev_view", "예매액")
 
 with tab_cnt:
-    st.markdown(md("**예매수**(티켓 판매 장수): 얼마나 늘었나?"))
+    st.markdown(md("**예매수 추이**(티켓 판매 장수 = 총 예매수 − 취소수)"))
     growth_tab(wc, "만 장", "cnt_view", "예매수")
 
 with tab_price:
@@ -570,12 +570,13 @@ with st.container(border=True):
     if rt is not None:
         st.dataframe(style_extremes(rt))
         cpi_txt = "" if pd.isna(cpi_end) else f"같은 기간 소비자물가 {cpi_end:.0f}%.  \n"
-        st.caption(md(f"최근 12개월 {window_label(end)}. 예매액·예매수·장당 가격은 2019년 연간 = 100% (300% = 2019년의 3배).  \n"
-                      "예매액: 티켓 판매 금액. 예매수: 판매 장수. 장당 가격: 예매액 ÷ 예매수(명목).  \n"
+        st.caption(md("예매액: 티켓 판매 금액(총 예매액 − 취소액). \n"
+                      "예매수: 판매 장수(총 예매수 − 취소수). \n"
+                      "장당 가격: 예매액 ÷ 예매수(명목).  \n"
                       "비중: 7개 장르 예매액 합계 중 몫.  \n"
                       "성장 기여도: (최근 12개월 − 2019년) 예매액 ÷ 2019년 전체 예매액. 장르별 합이 전체 성장분(%p). 복합·대중무용 분은 표에 없음.  \n"
-                      + cpi_txt +
-                      "7개 장르 중 최고는 굵은 파란색, 최저는 굵은 주황색. 물가 반영 가격은 탭 3 참고."))
+                      + cpi_txt +))
+                      
     for t in sents:
         st.markdown("- " + md(t))
     if not sents:
